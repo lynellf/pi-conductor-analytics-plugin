@@ -1,3 +1,10 @@
 node_modules/
 dist/
 *.tsbuildinfo
+
+# pi-conductor runtime state (JSONL run logs, per-session transcripts, watermarks).
+# This directory is recreated on every pi session; do not track it.
+.pi-conductor/
+
+# Defensive: also ignore the dotted-config form some pi installs use.
+.pi/

@@ -1,0 +1,61 @@
+{
+  "name": "pi-conductor-analytics-plugin",
+  "version": "0.1.0",
+  "description": "Pi extension that reports pi-conductor run telemetry to an external HTTP endpoint.",
+  "license": "MIT",
+  "author": "Ezell <lynellf@gmail.com>",
+  "type": "module",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "files": [
+    "dist",
+    "extensions",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "pi": {
+    "extensions": [
+      "./extensions"
+    ]
+  },
+  "keywords": [
+    "pi",
+    "pi-extension",
+    "pi-package",
+    "pi-conductor",
+    "analytics",
+    "telemetry"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit -p tsconfig.test.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "format": "biome format --write .",
+    "format:check": "biome format .",
+    "prepare": "pnpm build"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": ">=0.79.0 || ^0.79.1 || ^0.80.0"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.4.16",
+    "@earendil-works/pi-coding-agent": "^0.79.1",
+    "@types/node": "^22.10.0",
+    "typescript": "^5.6.0",
+    "vitest": "^3.2.0"
+  },
+  "dependencies": {}
+}

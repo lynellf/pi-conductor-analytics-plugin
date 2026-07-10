@@ -46,16 +46,22 @@ function getPluginVersion(): string {
  *
  * @param records  One or more conductor PersistedRecord objects.
  * @param cwd      The current working directory at send time.
+ * @param source   The source label for the envelope. Defaults to
+ *                 `"pi.events:conductor:record"`.
  * @returns A complete AnalyticsEnvelope ready for JSON serialization.
  */
-export function createEnvelope(records: unknown[], cwd: string = process.cwd()): AnalyticsEnvelope {
+export function createEnvelope(
+  records: unknown[],
+  cwd: string = process.cwd(),
+  source: string = "pi.events:conductor:record",
+): AnalyticsEnvelope {
   return {
     plugin: "pi-conductor-analytics-plugin",
     plugin_version: getPluginVersion(),
     schema_version: 1,
     sent_at: new Date().toISOString(),
     cwd,
-    source: "pi.events:conductor:record",
+    source,
     records: [...records],
   };
 }

@@ -1,9 +1,16 @@
 /**
  * pi-conductor analytics plugin extension entrypoint.
  *
- * This extension hooks into pi-conductor's `conductor:record` event
- * (emitted via `pi.events`) and POSTs telemetry to a configured
- * external HTTP endpoint in a non-blocking fashion.
+ * This extension is a thin adapter that:
+ * 1. Creates an `AnalyticsReporter` using `process.cwd()` and the
+ *    default `.pi-conductor/runs` directory.
+ * 2. Forwards valid `conductor:record` events to `reporter.enqueue()`.
+ * 3. Calls `reporter.backfill()` once on `session_start`.
+ * 4. Calls `reporter.shutdown()` on `session_shutdown`.
+ *
+ * No delivery or watermark business logic lives in this file.
+ * Library callers should use `createAnalyticsReporter()` directly
+ * with explicit `cwd`, `runsDir`, and optional `configPath`.
  *
  * ## Warning surface discipline
  *
@@ -22,76 +29,82 @@
  * - `pi.on("session_shutdown", ...)` – best-effort flush on shutdown.
  */
 
+import { join } from "node:path";
 import type {
   ExtensionAPI,
   SessionShutdownEvent,
   SessionStartEvent,
 } from "@earendil-works/pi-coding-agent";
+import { createAnalyticsReporter } from "../src/reporter.js";
+import type { AnalyticsReporter, OverflowCallback } from "../src/types.js";
 
-import { getConfig } from "../src/config.js";
-import { DeliveryQueue, defaultPost } from "../src/queue.js";
-import { runBackstop } from "../src/watermark.js";
+// ─── Default runs directory ──────────────────────────────────────────────
+
+/**
+ * The default directory where pi-conductor stores run JSONL files.
+ * Mirrors `DEFAULT_RUN_BASE_DIR` in the watermark module.
+ */
+const DEFAULT_RUN_BASE_DIR = ".pi-conductor/runs";
 
 // ─── Module-level state ─────────────────────────────────────────────────
 
-let queue: DeliveryQueue | undefined;
+let reporter: AnalyticsReporter | undefined;
 let recordsObserved = false;
 let backstopDone = false;
 let noRecordWarningTimer: ReturnType<typeof setTimeout> | null = null;
+let latestOverflowDropped = 0;
+let latestOverflowPending = 0;
 
-// ─── Package version ────────────────────────────────────────────────────
-
-const PLUGIN_VERSION = "0.1.0";
-
-// ─── Helpers ────────────────────────────────────────────────────────────
+// ─── Overflow callback ──────────────────────────────────────────────────
 
 /**
- * Minimal record validation: must be a non-null object with a string `type`.
+ * Safe overflow callback that logs a redacted warning immediately
+ * and stores the latest aggregate for UI notification.
+ *
+ * This callback does not require conductor record handler context,
+ * does not throw, and does not await.
  */
-function isValidRecord(data: unknown): data is Record<string, unknown> {
-  return (
-    typeof data === "object" &&
-    data !== null &&
-    typeof (data as Record<string, unknown>).type === "string"
+const overflowCallback: OverflowCallback = (
+  dropped: number,
+  pending: number,
+  _suppressed: number,
+): void => {
+  latestOverflowDropped = dropped;
+  latestOverflowPending = pending;
+  console.warn(
+    `[pi-conductor-analytics-plugin] Queue overflow: ${dropped} total dropped, ${pending} pending`,
   );
-}
+};
 
 // ─── Extension factory ──────────────────────────────────────────────────
 
 export default function analyticsExtension(pi: ExtensionAPI): void {
-  // ── Load config ─────────────────────────────────────────────────────
   const cwd = process.cwd();
-  const [config, sourcePath, warnings] = getConfig(cwd);
+  const runsDir = join(cwd, DEFAULT_RUN_BASE_DIR);
 
-  // Surface config warnings in factory context (only console.warn available)
-  for (const w of warnings) {
-    console.warn(`[pi-conductor-analytics-plugin] ${w}`);
-  }
-
-  if (sourcePath !== null) {
-    console.warn(`[pi-conductor-analytics-plugin] Config loaded from ${sourcePath}`);
-  }
-
-  if (!config.enabled || config.endpoint === undefined) {
-    if (sourcePath === null) {
-      console.warn("[pi-conductor-analytics-plugin] No config found. Plugin loaded but inactive.");
-    } else {
-      console.warn(
-        "[pi-conductor-analytics-plugin] Config explicitly disabled. Plugin loaded but inactive.",
-      );
-    }
-    return; // Early return: nothing to register
-  }
-
-  // ── Initialize delivery queue ───────────────────────────────────────
-  queue = new DeliveryQueue(config, defaultPost, cwd, PLUGIN_VERSION);
-  console.warn(`[pi-conductor-analytics-plugin] Active — posting to ${config.endpoint}`);
+  // ── Create the reporter ─────────────────────────────────────────────
+  // The reporter surfaces config warnings and disabled state via console.warn.
+  // When disabled, its methods are safe no-ops; we still register lifecycle
+  // handlers so the no-record warning and overflow surfacing work.
+  reporter = createAnalyticsReporter(
+    {
+      cwd,
+      runsDir,
+      // configPath is intentionally omitted so standard discovery is used.
+      // Library callers should provide an explicit configPath for isolation.
+    },
+    overflowCallback,
+  );
 
   // ── Listen for conductor records ────────────────────────────────────
   // This is the primary hook: pi-conductor's extension emits
   // "conductor:record" on the shared pi.events bus.
   pi.events.on("conductor:record", (data: unknown) => {
-    if (!isValidRecord(data)) {
+    if (
+      typeof data !== "object" ||
+      data === null ||
+      typeof (data as Record<string, unknown>).type !== "string"
+    ) {
       console.warn(
         "[pi-conductor-analytics-plugin] Ignoring invalid record (not a non-null object with a string `type`)",
       );
@@ -99,7 +112,7 @@ export default function analyticsExtension(pi: ExtensionAPI): void {
     }
 
     recordsObserved = true;
-    queue?.enqueue(data);
+    reporter?.enqueue(data);
   });
 
   // ── Warn if no conductor records after session start ─────────────────
@@ -119,21 +132,33 @@ export default function analyticsExtension(pi: ExtensionAPI): void {
       }
     }, 30_000);
 
-    // ── Run JSONL backstop on session start ─────────────────────────
-    if (!backstopDone && queue !== undefined && config.endpoint !== undefined) {
+    // ── Surface overflow aggregate if any occurred ───────────────────
+    if (latestOverflowDropped > 0) {
+      ctx.ui.notify(
+        `[pi-conductor-analytics-plugin] Queue overflow: ${latestOverflowDropped} total dropped, ${latestOverflowPending} pending`,
+        "warning",
+      );
+    }
+
+    // ── Run JSONL backfill on session start ──────────────────────────
+    if (!backstopDone && reporter !== undefined) {
       backstopDone = true;
-      try {
-        const backfilled = runBackstop(cwd, queue, config);
-        if (backfilled > 0) {
-          const msg = `[pi-conductor-analytics-plugin] Backstop enqueued ${backfilled} records from disk.`;
+      // backfill() does not block; it enqueues and returns the count.
+      // Delivery happens asynchronously via the queue interval.
+      reporter
+        .backfill()
+        .then((backfilled: number) => {
+          if (backfilled > 0) {
+            const msg = `[pi-conductor-analytics-plugin] Backfill enqueued ${backfilled} records from disk.`;
+            console.warn(msg);
+            ctx.ui.notify(msg, "info");
+          }
+        })
+        .catch((err: unknown) => {
+          const msg = `[pi-conductor-analytics-plugin] Backfill error: ${(err as Error).message}`;
           console.warn(msg);
-          ctx.ui.notify(msg, "info");
-        }
-      } catch (err) {
-        const msg = `[pi-conductor-analytics-plugin] Backstop error: ${(err as Error).message}`;
-        console.warn(msg);
-        ctx.ui.notify(msg, "warning");
-      }
+          ctx.ui.notify(msg, "warning");
+        });
     }
   });
 
@@ -145,14 +170,14 @@ export default function analyticsExtension(pi: ExtensionAPI): void {
       noRecordWarningTimer = null;
     }
 
-    if (queue !== undefined) {
+    if (reporter !== undefined) {
       ctx.ui.notify(
         "[pi-conductor-analytics-plugin] Shutdown: flushing pending records...",
         "info",
       );
       try {
-        await queue.shutdown();
-        const s = queue.stats();
+        await reporter.shutdown();
+        const s = reporter.stats();
         ctx.ui.notify(
           `[pi-conductor-analytics-plugin] Flush complete. Delivered: ${s.delivered}, Failed: ${s.failed}, Dropped: ${s.dropped}`,
           "info",

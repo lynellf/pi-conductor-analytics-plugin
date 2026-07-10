@@ -140,12 +140,20 @@ export function createAnalyticsReporter(
 
   /**
    * Track pending watermark updates for delivery-aware updates.
-   * Maps runId -> highest index to mark as delivered.
+   * Maps runId -> highest contiguously-acknowledged index.
    */
   const pendingWatermarks = new Map<string, number>();
 
   /**
-   * Delivery callback that updates watermarks after successful delivery.
+   * Delivery callback that advances watermarks only through contiguous indices.
+   *
+   * The spec requires: "Successful acknowledgements are accumulated per run and
+   * advance only through the highest contiguous acknowledged line; an
+   * acknowledgement after a failed gap cannot skip that gap."
+   *
+   * This function checks the effective committed position (max of on-disk watermark
+   * and in-memory pending value) and only advances through strictly increasing,
+   * gap-free indices from that position.
    */
   function handleDelivery(runId: string | null, _count: number, indices?: number[]): void {
     if (runId === null || indices === undefined) {
@@ -153,18 +161,30 @@ export function createAnalyticsReporter(
       return;
     }
 
-    // Track the highest index delivered for this run
-    for (const idx of indices) {
-      const current = pendingWatermarks.get(runId) ?? -1;
-      if (idx > current) {
+    // Effective committed position: max of on-disk and in-memory pending
+    const committed = readWatermark(runId);
+    const pending = pendingWatermarks.get(runId) ?? -1;
+    const effectiveStart = Math.max(committed, pending);
+
+    // Only contiguous indices from effectiveStart + 1 are acknowledged
+    const sorted = [...new Set(indices)].sort((a, b) => a - b);
+    let nextExpected = effectiveStart + 1;
+
+    for (const idx of sorted) {
+      if (idx > nextExpected) break; // gap — stop advancing
+      if (idx === nextExpected) {
         pendingWatermarks.set(runId, idx);
+        nextExpected = idx + 1;
       }
+      // idx < nextExpected is a duplicate — skip
     }
   }
 
   /**
    * Flush pending watermark updates to disk.
    * Call this after successful flush to commit watermarks.
+   *
+   * Only the highest contiguous index per run is written.
    */
   function flushWatermarks(): void {
     for (const [runId, lastIndex] of pendingWatermarks) {

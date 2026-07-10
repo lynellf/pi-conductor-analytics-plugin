@@ -10,7 +10,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import type { AnalyticsConfig, ResolvedConfig } from "./types.js";
 
 // ─── Helpers ───────────────────────────────────────────────────────────
@@ -50,6 +50,11 @@ const DEFAULTS: ResolvedConfig = {
   request: {
     timeoutMs: 5000,
     maxRetries: 2,
+    retry: {
+      baseDelayMs: 200,
+      maxDelayMs: 5000,
+      jitterFactor: 0,
+    },
   },
 };
 
@@ -94,6 +99,43 @@ export function loadConfig(
 }
 
 /**
+ * Load and resolve config from a specific file path.
+ *
+ * Unlike `loadConfig()` which probes multiple directories, this function
+ * reads exactly one file. It bypasses the `getConfig()` cache so that
+ * an explicit `configPath` in `createAnalyticsReporter()` is isolated from
+ * any previously cached config.
+ *
+ * @param configPath  Absolute or relative path to the config file.
+ * @param cwd         Current working directory for resolving relative paths.
+ * @returns Tuple of [resolved config, resolved path, warnings[]].
+ *          Returns disabled config and empty warnings if the file does not exist.
+ */
+export function loadConfigFromPath(
+  configPath: string,
+  cwd: string,
+): [ResolvedConfig, string, string[]] {
+  const warnings: string[] = [];
+
+  // Resolve relative paths against cwd; absolute paths are used as-is.
+  const resolvedPath = isAbsolute(configPath) ? configPath : join(cwd, configPath);
+
+  if (!existsSync(resolvedPath)) {
+    warnings.push(`Config file not found: ${resolvedPath}`);
+    return [{ ...DEFAULTS, enabled: false }, resolvedPath, warnings];
+  }
+
+  try {
+    const content = readFileSync(resolvedPath, "utf-8");
+    const raw = JSON.parse(content) as AnalyticsConfig;
+    return validateAndResolve(raw, resolvedPath, warnings);
+  } catch (err) {
+    warnings.push(`Failed to parse config at ${resolvedPath}: ${(err as Error).message}`);
+    return [{ ...DEFAULTS, enabled: false }, resolvedPath, warnings];
+  }
+}
+
+/**
  * Validate a raw config object and resolve with defaults.
  */
 export function validateAndResolve(
@@ -101,7 +143,13 @@ export function validateAndResolve(
   source: string,
   warnings: string[],
 ): [ResolvedConfig, string, string[]] {
-  const resolved: ResolvedConfig = { ...DEFAULTS };
+  // Deep copy defaults to avoid mutating module-level state.
+  const resolved: ResolvedConfig = {
+    ...DEFAULTS,
+    batch: { ...DEFAULTS.batch },
+    request: { ...DEFAULTS.request },
+    headers: { ...DEFAULTS.headers },
+  };
 
   // enabled
   if (raw.enabled === false) {
@@ -163,6 +211,25 @@ export function validateAndResolve(
     }
     if (typeof raw.request.maxRetries === "number" && raw.request.maxRetries >= 0) {
       resolved.request.maxRetries = raw.request.maxRetries;
+    }
+    // retry sub-config
+    if (
+      raw.request.retry !== undefined &&
+      typeof raw.request.retry === "object" &&
+      !Array.isArray(raw.request.retry)
+    ) {
+      if (typeof raw.request.retry.baseDelayMs === "number" && raw.request.retry.baseDelayMs > 0) {
+        resolved.request.retry.baseDelayMs = raw.request.retry.baseDelayMs;
+      }
+      if (typeof raw.request.retry.maxDelayMs === "number" && raw.request.retry.maxDelayMs > 0) {
+        resolved.request.retry.maxDelayMs = raw.request.retry.maxDelayMs;
+      }
+      if (
+        typeof raw.request.retry.jitterFactor === "number" &&
+        raw.request.retry.jitterFactor >= 0
+      ) {
+        resolved.request.retry.jitterFactor = raw.request.retry.jitterFactor;
+      }
     }
   }
 

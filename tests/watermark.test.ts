@@ -16,7 +16,11 @@ describe("watermark / backstop", () => {
     endpoint: "https://example.com/events",
     headers: {},
     batch: { enabled: false, maxRecords: 25, flushIntervalMs: 100000 },
-    request: { timeoutMs: 5000, maxRetries: 0 },
+    request: {
+      timeoutMs: 5000,
+      maxRetries: 0,
+      retry: { baseDelayMs: 200, maxDelayMs: 5000, jitterFactor: 0 },
+    },
   };
 
   beforeEach(() => {

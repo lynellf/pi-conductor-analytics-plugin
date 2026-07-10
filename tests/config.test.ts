@@ -6,12 +6,15 @@ import { clearConfigCache, interpolateEnv, loadConfig, validateAndResolve } from
 
 describe("config", () => {
   describe("interpolateEnv", () => {
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: test intentionally uses ${...} literal
     it("replaces ${ENV_VAR} with env value", () => {
       process.env.TEST_VAR = "hello";
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: test intentionally uses ${...} literal
       expect(interpolateEnv("${TEST_VAR}")).toBe("hello");
     });
 
     it("leaves unrecognized patterns as-is", () => {
+      // biome-ignore lint/suspicious/noTemplateCurlyInString: test intentionally uses ${...} literal
       expect(interpolateEnv("${UNKNOWN_VAR}")).toBe("${UNKNOWN_VAR}");
     });
 
@@ -86,6 +89,7 @@ describe("config", () => {
       const [config, _source, _warnings] = validateAndResolve(
         {
           endpoint: "https://example.com/events",
+          // biome-ignore lint/suspicious/noTemplateCurlyInString: test intentionally uses ${...} literal in config
           headers: { Authorization: "Bearer ${TOKEN}" },
         },
         "/fake/path.json",

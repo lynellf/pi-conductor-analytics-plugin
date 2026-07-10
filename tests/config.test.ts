@@ -169,9 +169,16 @@ describe("config", () => {
     });
 
     it("returns disabled config when no config file exists", () => {
-      const [config, source, _warnings] = loadConfig(tmpDir);
-      expect(config.enabled).toBe(false);
-      expect(source).toBeNull();
+      // Use an isolated fake home dir so loadConfig doesn't pick up the
+      // user's real ~/.pi-conductor-analytics.json
+      const fakeHome = mkdtempSync(join(tmpdir(), "pi-analytics-fake-home-"));
+      try {
+        const [config, source, _warnings] = loadConfig(tmpDir, fakeHome);
+        expect(config.enabled).toBe(false);
+        expect(source).toBeNull();
+      } finally {
+        rmSync(fakeHome, { recursive: true, force: true });
+      }
     });
 
     it("cwd config overrides home config", () => {

@@ -51,8 +51,8 @@ const DEFAULTS: ResolvedConfig = {
     timeoutMs: 5000,
     maxRetries: 2,
     retry: {
-      baseDelayMs: 200,
-      maxDelayMs: 5000,
+      baseDelayMs: 100,
+      maxDelayMs: 2000,
       jitterFactor: 0,
     },
   },

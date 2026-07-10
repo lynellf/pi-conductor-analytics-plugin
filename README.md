@@ -106,6 +106,9 @@ Config lookup order (first existing file wins):
 | `batch.flushIntervalMs` | `1000` | Flush interval (ms) for partial batches |
 | `request.timeoutMs` | `5000` | Request timeout (ms) |
 | `request.maxRetries` | `2` | Max retries per failed request |
+| `request.retry.baseDelayMs` | `100` | Base delay (ms) for exponential backoff |
+| `request.retry.maxDelayMs` | `2000` | Maximum delay (ms) cap for backoff |
+| `request.retry.jitterFactor` | `0` | Jitter factor (0-1) for thundering herd prevention |
 
 ## Delivery behavior
 

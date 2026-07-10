@@ -139,9 +139,9 @@ export interface AnalyticsConfig {
     maxRetries?: number;
     /** Retry behavior configuration. */
     retry?: {
-      /** Base delay in ms for exponential backoff. Default: 200. */
+      /** Base delay in ms for exponential backoff. Default: 100. */
       baseDelayMs?: number;
-      /** Maximum delay in ms between retries. Default: 5000. */
+      /** Maximum delay in ms between retries. Default: 2000. */
       maxDelayMs?: number;
       /** Jitter factor (0-1). Random fraction of delay added for thundering herd prevention. Default: 0 (deterministic backoff). */
       jitterFactor?: number;

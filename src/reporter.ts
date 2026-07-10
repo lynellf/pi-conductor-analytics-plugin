@@ -345,6 +345,10 @@ export function createAnalyticsReporter(
    */
   async function flush(deadlineMs?: number): Promise<void> {
     if (isDisabled || queue === null) return;
+    // Validate deadlineMs: must be positive if provided
+    if (deadlineMs !== undefined && (typeof deadlineMs !== "number" || deadlineMs <= 0)) {
+      return; // Silently ignore invalid deadline values
+    }
     await queue.flush(deadlineMs);
     // Commit watermark updates after flush attempt
     flushWatermarks();

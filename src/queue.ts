@@ -395,12 +395,6 @@ export class DeliveryQueue {
         return { success: false, reason: "deadline_exceeded" };
       }
 
-      // Calculate remaining time
-      const remaining = deadline.remaining();
-      if (remaining === 0) {
-        return { success: false, reason: "deadline_exceeded" };
-      }
-
       // Apply capped exponential backoff BEFORE the retry attempt, not after.
       // Spec: min(100 * 2^attempt, 2000) ms before retry attempt+1.
       if (attempt > 0) {
@@ -421,6 +415,12 @@ export class DeliveryQueue {
 
         // Sleep for the backoff delay
         await new Promise((r) => setTimeout(r, delay));
+      }
+
+      // Calculate remaining time AFTER any delays to ensure accurate deadline tracking
+      const remaining = deadline.remaining();
+      if (remaining === 0) {
+        return { success: false, reason: "deadline_exceeded" };
       }
 
       // Create abort controller for this attempt

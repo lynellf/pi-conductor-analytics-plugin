@@ -345,9 +345,11 @@ export function createAnalyticsReporter(
    */
   async function flush(deadlineMs?: number): Promise<void> {
     if (isDisabled || queue === null) return;
-    // Validate deadlineMs: must be positive if provided
-    if (deadlineMs !== undefined && (typeof deadlineMs !== "number" || deadlineMs <= 0)) {
-      return; // Silently ignore invalid deadline values
+    // Non-positive deadlineMs falls back to config timeoutMs (5000 ms default).
+    // This matches queue.flush() semantics and avoids silently ignoring a
+    // deadline override that the caller may have set intentionally.
+    if (deadlineMs !== undefined && deadlineMs <= 0) {
+      deadlineMs = undefined; // triggers queue's own fallback to config.timeoutMs
     }
     await queue.flush(deadlineMs);
     // Commit watermark updates after flush attempt

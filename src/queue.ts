@@ -154,8 +154,13 @@ export class DeliveryQueue {
   async flush(deadlineMs?: number): Promise<void> {
     if (this.posting || this.buffer.length === 0) return;
 
-    // Use provided deadline or fall back to config timeout
-    const deadline = createDeadline(deadlineMs ?? this.config.request.timeoutMs);
+    // Validate deadlineMs: non-positive values fall back to config timeout.
+    // This prevents a negative/zero deadline from silently creating an unbounded
+    // deadline (createDeadline(0) = no deadline), which would violate the caller's
+    // intent (e.g. the 2-second shutdown deadline in shutdown()).
+    const effectiveDeadlineMs =
+      deadlineMs !== undefined && deadlineMs > 0 ? deadlineMs : this.config.request.timeoutMs;
+    const deadline = createDeadline(effectiveDeadlineMs);
     const batch = this.buffer.splice(0, this.config.batch.maxRecords);
     this.posting = true;
 

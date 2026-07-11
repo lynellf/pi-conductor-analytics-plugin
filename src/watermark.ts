@@ -120,34 +120,93 @@ function readRecordsFrom(
  * Run the JSONL backstop: walk all known JSONL run files and enqueue
  * any records past the per-run watermark.
  *
- * @param cwd   The current working directory (probe <cwd>/.pi-conductor/runs/).
+ * **Watermarks are updated only after successful delivery**, not after
+ * reading. This prevents record loss when delivery fails: if the network
+ * is down, records remain in the queue and replay on the next backstop.
+ *
+ * @param cwd    The current working directory (probe <cwd>/.pi-conductor/runs/).
  * @param queue  The delivery queue to enqueue records into.
- * @param config  The resolved config (used for batching, not delivery here).
- * @returns The number of backfill records enqueued.
+ * @param _config  The resolved config (used for batching, not delivery here).
+ * @returns Promise resolving to the number of backfill records enqueued.
  */
-export function runBackstop(cwd: string, queue: DeliveryQueue, _config: ResolvedConfig): number {
+export async function runBackstop(
+  cwd: string,
+  queue: DeliveryQueue,
+  _config: ResolvedConfig,
+): Promise<number> {
   const runsDir = join(cwd, DEFAULT_RUN_BASE_DIR);
   if (!existsSync(runsDir)) return 0;
 
   const runs = discoverRuns(runsDir);
   let totalEnqueued = 0;
 
+  // Track the highest index per run that has been enqueued.
+  // The watermark is updated to this value after delivery confirmation.
+  const pendingHighIndex: Record<string, number> = {};
+
   for (const run of runs) {
     const watermark = readWatermark(runsDir, run.runId);
-    const { records, lineCount } = readRecordsFrom(run.filePath, watermark);
+    const { records } = readRecordsFrom(run.filePath, watermark);
 
-    for (const record of records) {
-      queue.enqueue(record);
+    if (records.length === 0) continue;
+
+    const highestIndex = watermark + records.length;
+    pendingHighIndex[run.runId] = Math.max(pendingHighIndex[run.runId] ?? -1, highestIndex);
+
+    // Use enqueueFromRun so run metadata (runId, index) is preserved in the buffer.
+    // This is required for the delivery callback to correctly identify which run
+    // delivered records belong to.
+    for (let i = 0; i < records.length; i++) {
+      // readRecordsFrom starts at watermark + 1, so record at index i has JSONL index: watermark + i + 1
+      queue.enqueueFromRun(records[i], run.runId, watermark + i + 1);
       totalEnqueued++;
-    }
-
-    // Update watermark to reflect all lines read
-    if (lineCount > watermark + 1) {
-      writeWatermark(runsDir, run.runId, lineCount - 1);
     }
   }
 
-  return totalEnqueued;
+  if (totalEnqueued === 0) return 0;
+
+  // Wire a delivery callback so watermarks advance only after confirmed delivery.
+  // This ensures at-least-once semantics: failed delivery leaves records in the
+  // queue and the watermark is NOT advanced.
+  let delivered = 0;
+  let resolvePromise: ((n: number) => void) | null = null;
+  const promise = new Promise<number>((resolve) => {
+    resolvePromise = resolve;
+  });
+
+  queue.setDeliveryCallback((runId, count) => {
+    if (runId === null) return;
+    const pendingIdx = pendingHighIndex[runId];
+    if (pendingIdx !== undefined) {
+      writeWatermark(runsDir, runId, pendingIdx);
+      delete pendingHighIndex[runId];
+    }
+    delivered += count;
+
+    if (delivered >= totalEnqueued && resolvePromise) {
+      resolvePromise(totalEnqueued);
+      resolvePromise = null;
+    }
+  });
+
+  // Flush the queue (non-blocking). The delivery callback fires when the
+  // POST resolves, which resolves the promise via the callback above.
+  queue.flush().catch(() => {
+    // Flush errors (exceptions) are non-fatal; records remain in the queue
+    // and will be replayed on the next backstop.
+  });
+
+  // Safety timeout: if delivery never succeeds (network down, etc.), resolve
+  // the promise after 5 minutes so callers don't hang indefinitely.
+  // The watermark is NOT advanced in this case (at-least-once semantics).
+  setTimeout(() => {
+    if (resolvePromise) {
+      resolvePromise(totalEnqueued);
+      resolvePromise = null;
+    }
+  }, 300_000);
+
+  return promise;
 }
 
 /**

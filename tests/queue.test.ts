@@ -588,6 +588,44 @@ describe("DeliveryQueue flush deadline parameter", () => {
 
     expect(queue.stats().delivered).toBe(1);
   });
+
+  it("rejects non-positive deadlineMs and falls back to config timeoutMs", async () => {
+    // Previously (buggy) code passed non-positive deadlineMs directly to
+    // createDeadline(), which creates an unbounded deadline for deadlineMs=0
+    // (createDeadline(0) = no deadline), violating the caller's intent.
+    // The fix validates that deadlineMs must be > 0 before using it.
+    let postCallCount = 0;
+    const postFn = async (): Promise<boolean> => {
+      postCallCount++;
+      await new Promise((r) => setTimeout(r, 10));
+      return true;
+    };
+
+    const queue = new DeliveryQueue(
+      {
+        ...TEST_CONFIG,
+        request: {
+          timeoutMs: 5000,
+          maxRetries: 0,
+          retry: { baseDelayMs: 100, maxDelayMs: 500, jitterFactor: 0 },
+        },
+      },
+      postFn,
+      "/cwd",
+    );
+    queue.enqueue({ type: "test", ts: 1 });
+
+    // deadlineMs=0 should fall back to config timeoutMs and still succeed
+    await queue.flush(0);
+    expect(queue.stats().delivered).toBe(1);
+
+    // deadlineMs=-100 should also fall back and still succeed
+    queue.enqueue({ type: "test", ts: 2 });
+    await queue.flush(-100);
+    expect(queue.stats().delivered).toBe(2);
+
+    expect(postCallCount).toBe(2);
+  });
 });
 
 describe("DeliveryQueue shutdown behavior", () => {

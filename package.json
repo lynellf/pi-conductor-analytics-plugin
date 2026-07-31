@@ -1,6 +1,6 @@
 {
   "name": "pi-conductor-analytics-plugin",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Pi extension that reports pi-conductor run telemetry to an external HTTP endpoint.",
   "license": "MIT",
   "author": "Ezell <lynellf@gmail.com>",

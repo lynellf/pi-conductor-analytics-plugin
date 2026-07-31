@@ -53,7 +53,7 @@ import type {
 
 // ─── Constants ──────────────────────────────────────────────────────────
 
-const PLUGIN_VERSION = "0.1.0";
+const PLUGIN_VERSION = "0.2.0";
 
 // ─── Reporter implementation ────────────────────────────────────────────
 

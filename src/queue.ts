@@ -86,7 +86,7 @@ export class DeliveryQueue {
     config: ResolvedConfig,
     postFn: PostFunction,
     cwd: string,
-    pluginVersion: string = "0.1.0",
+    pluginVersion: string = "0.2.0",
     source: string = DEFAULT_SOURCE,
   ) {
     this.config = config;

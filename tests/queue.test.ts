@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import type { FileMutationRecord } from "../src/index.js";
 import { DeliveryQueue, defaultPost } from "../src/queue.js";
 import type { AnalyticsEnvelope, ResolvedConfig } from "../src/types.js";
 
@@ -194,6 +195,54 @@ describe("defaultPost", () => {
     };
     const result = await defaultPost(envelope, config);
     expect(result).toBe(false);
+  });
+});
+
+describe("file_mutation analytics contract", () => {
+  it("forwards write and edit records with optional hunks unchanged", async () => {
+    let capturedEnvelope: AnalyticsEnvelope | undefined;
+    const postFn = async (
+      envelope: AnalyticsEnvelope,
+      _config: ResolvedConfig,
+    ): Promise<boolean> => {
+      capturedEnvelope = envelope;
+      return true;
+    };
+    const queue = new DeliveryQueue(DISABLED_BATCH_CONFIG, postFn, "/cwd");
+    const records: FileMutationRecord[] = [
+      {
+        type: "file_mutation",
+        run_id: "run-write",
+        role: "worker",
+        session_id: "session-write",
+        session_file: "/tmp/write.jsonl",
+        tool_name: "write",
+        files: [
+          {
+            path: "src/new.ts",
+            additions: 24,
+            deletions: 0,
+            hunks: [{ lineNumber: 1, content: "+export {};", kind: "add" }],
+          },
+        ],
+        ts: 1,
+      },
+      {
+        type: "file_mutation",
+        run_id: "run-edit",
+        role: "worker",
+        session_id: "session-edit",
+        session_file: "/tmp/edit.jsonl",
+        tool_name: "edit",
+        files: [{ path: "src/existing.ts", additions: 4, deletions: 3 }],
+        ts: 2,
+      },
+    ];
+
+    for (const record of records) queue.enqueue(record);
+    await queue.flush();
+
+    expect(capturedEnvelope?.records).toEqual(records);
   });
 });
 

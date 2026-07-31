@@ -6,6 +6,47 @@ Pi extension that reports [pi-conductor](https://github.com/lynellf/pi-conductor
 
 This plugin hooks into pi-conductor's `pi.events.on("conductor:record", ...)` event to receive persisted run records (`session_started`, `session_ended`, `transition_accepted`, `transition_rejected`, `checkpoint_snapshot`, etc.) and forwards them to a configured HTTP(S) endpoint in a **non-blocking, best-effort** fashion.
 
+## File-mutation telemetry
+
+The analytics contract uses pi-conductor's persisted `file_mutation` record. The
+plugin forwards this record unchanged in the envelope's `records` array; it
+does not emit a duplicate `display` record.
+
+A successful `write` or `edit` is delivered in this shape:
+
+```json
+{
+  "type": "file_mutation",
+  "run_id": "run-123",
+  "role": "worker",
+  "session_id": "session-456",
+  "session_file": "/tmp/session-456.jsonl",
+  "tool_name": "edit",
+  "files": [
+    {
+      "path": "src/index.ts",
+      "additions": 12,
+      "deletions": 4,
+      "hunks": [
+        { "lineNumber": 10, "content": "+const ready = true;", "kind": "add" }
+      ]
+    }
+  ],
+  "ts": 1735689600000
+}
+```
+
+`files[*].additions` and `files[*].deletions` are character counts. The
+optional `hunks` array contains `{ lineNumber, content, kind }` entries, where
+`kind` is `add`, `del`, or `context`. Hunk generation can be unavailable (for
+example, when the host cannot read the pre-mutation file); consumers should
+still use the path and character counts. Failed mutations and malformed
+mutation arguments do not produce a `file_mutation` record.
+
+Consumers should select records where `type === "file_mutation"` and use
+`tool_name` to distinguish `write` from `edit`. These records retain the
+plugin's normal at-least-once backstop and delivery semantics.
+
 ## Installation
 
 ```bash

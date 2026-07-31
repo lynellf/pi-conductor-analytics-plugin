@@ -14,6 +14,51 @@ export interface AnalyticsRecord {
 }
 
 /**
+ * One line in the optional structured diff attached to a file mutation.
+ *
+ * `lineNumber` refers to the old file for `del` lines and the new file for
+ * `add` and `context` lines. `content` is already rendered with a `+` or `-`
+ * marker where applicable.
+ */
+export interface FileMutationHunk {
+  readonly lineNumber: number;
+  readonly content: string;
+  readonly kind: "add" | "del" | "context";
+}
+
+/**
+ * File metadata produced by a successful `write` or `edit` tool call.
+ *
+ * `additions` and `deletions` are character counts. `hunks` is optional
+ * because the host may be unable to read the pre-mutation file or derive a
+ * structured diff. Consumers must retain the character-count fallback.
+ */
+export interface FileMutationFile {
+  readonly path: string;
+  readonly additions?: number;
+  readonly deletions?: number;
+  readonly hunks?: ReadonlyArray<FileMutationHunk>;
+}
+
+/**
+ * Durable file-change telemetry emitted by pi-conductor after a successful
+ * `write` or `edit` call.
+ *
+ * The analytics plugin forwards this record unchanged inside an envelope's
+ * `records[]`; it does not synthesize a second `display` record.
+ */
+export interface FileMutationRecord extends AnalyticsRecord {
+  readonly type: "file_mutation";
+  readonly run_id: string;
+  readonly role: string;
+  readonly session_id: string;
+  readonly session_file: string;
+  readonly tool_name: "write" | "edit";
+  readonly files: ReadonlyArray<FileMutationFile>;
+  readonly ts: number;
+}
+
+/**
  * Options for creating an analytics reporter.
  *
  * @example
